@@ -1,197 +1,140 @@
-"""
-HIT137 Assignment 2 - Question 2
-Recursive-descent expression evaluator. No classes - plain functions only,
-as required.
-
-GRAMMAR (lowest to highest precedence, matching the brief's table):
-
-    expr    := term (('+' | '-') term)*                     # level 1, left
-    term    := unary ( ('*' | '/' | '%' | IMPLICIT) unary )* # level 2, left
-    unary   := '-' unary | power                             # level 3, prefix
-    power   := primary ('^' unary)?                          # level 4, right
-    primary := NUM | '(' expr ')'
-
-IMPLICIT MULTIPLICATION NOTE:
-The brief says implicit multiplication is valid, but that two bare adjacent
-numbers like "2 3" are NOT implicit multiplication. So implicit
-multiplication is only triggered when a primary is immediately followed by
-'(' with no operator in between - e.g. "2(3)", "(2)(3)", "2(3+4)". A bare
-"2 3" is left as a genuine syntax error (trailing token), which is what "2 3
-are not implicit multiplication" implies.
-
-TOKENS NOTE:
-The brief's own example dict for evaluate_file() shows a tokens string that
-does NOT end in "[END]", while the Tokens section a few paragraphs above it
-explicitly says the token line ends with [END] or ERROR. I've followed the
-explicit written rule (tokens end with [END]) since the dict example looks
-like a shorthand typo. If your provided sample_output.txt disagrees, it's a
-one-line change in format_tokens() below.
-"""
-
+import os
 import sys
 
-
-# ---------------------------------------------------------------------------
-# Tokenizer
-# ---------------------------------------------------------------------------
-
-def tokenize(expr: str):
-    """Turns an expression string into a list of (type, value) tuples.
-    Raises ValueError on any character that doesn't belong to the grammar.
-    """
+def tokenize(line):
     tokens = []
     i = 0
-    n = len(expr)
+    n = len(line)
     while i < n:
-        ch = expr[i]
+        ch = line[i]
+
         if ch.isspace():
             i += 1
             continue
+
         if ch.isdigit() or ch == ".":
             j = i
-            seen_dot = False
-            while j < n and (expr[j].isdigit() or (expr[j] == "." and not seen_dot)):
-                if expr[j] == ".":
-                    seen_dot = True
+            dot_used = False
+            while j < n and (line[j].isdigit() or (line[j] == "." and not dot_used)):
+                if line[j] == ".":
+                    dot_used = True
                 j += 1
-            literal = expr[i:j]
-            # must contain at least one digit and (if it has a dot) a digit after it
-            if literal in (".", "") or literal.endswith("."):
-                raise ValueError(f"Invalid number literal '{literal}'")
-            tokens.append(("NUM", literal))
+            num_text = line[i:j]
+            if num_text == "." or num_text.endswith("."):
+                raise ValueError("bad number")
+            tokens.append(("NUM", num_text))
             i = j
             continue
+
         if ch in "+-*/%^":
             tokens.append(("OP", ch))
             i += 1
             continue
+
         if ch == "(":
             tokens.append(("LPAREN", ch))
             i += 1
             continue
+
         if ch == ")":
             tokens.append(("RPAREN", ch))
             i += 1
             continue
-        raise ValueError(f"Unexpected character '{ch}'")
+
+        raise ValueError("bad character: " + ch)
+
     tokens.append(("END", ""))
     return tokens
 
-
-def format_tokens(tokens) -> str:
-    parts = []
-    for ttype, value in tokens:
-        if ttype == "END":
-            parts.append("[END]")
+def tokens_to_string(tokens):
+    out = []
+    for t_type, t_val in tokens:
+        if t_type == "END":
+            out.append("[END]")
         else:
-            parts.append(f"[{ttype}:{value}]")
-    return " ".join(parts)
+            out.append("[" + t_type + ":" + t_val + "]")
+    return " ".join(out)
 
+def current(state):
+    return state[0][state[1]]
 
-# ---------------------------------------------------------------------------
-# Parser (recursive descent) - builds a tuple-based parse tree
-#   number      -> ("num", float_value)
-#   binary op   -> (op_symbol, left_node, right_node)
-#   unary minus -> ("neg", operand_node)
-# ---------------------------------------------------------------------------
+def next_token(state):
+    tok = state[0][state[1]]
+    state[1] += 1
+    return tok
 
-class ParseState:
-    def __init__(self, tokens):
-        self.tokens = tokens
-        self.pos = 0
-
-    def peek(self):
-        return self.tokens[self.pos]
-
-    def advance(self):
-        tok = self.tokens[self.pos]
-        self.pos += 1
-        return tok
-
-
-def parse_expr(state: ParseState):
+def parse_expr(state):
     node = parse_term(state)
-    while state.peek()[0] == "OP" and state.peek()[1] in ("+", "-"):
-        op = state.advance()[1]
+    while current(state)[0] == "OP" and current(state)[1] in ("+", "-"):
+        op = next_token(state)[1]
         right = parse_term(state)
         node = (op, node, right)
     return node
 
-
-def parse_term(state: ParseState):
+def parse_term(state):
     node = parse_unary(state)
     while True:
-        ttype, value = state.peek()
-        if ttype == "OP" and value in ("*", "/", "%"):
-            state.advance()
+        t_type, t_val = current(state)
+        if t_type == "OP" and t_val in ("*", "/", "%"):
+            next_token(state)
             right = parse_unary(state)
-            node = (value, node, right)
-        elif ttype == "LPAREN":
-            # implicit multiplication: primary directly followed by '('
+            node = (t_val, node, right)
+        elif t_type == "LPAREN":
             right = parse_unary(state)
             node = ("*", node, right)
         else:
             break
     return node
 
-
-def parse_unary(state: ParseState):
-    ttype, value = state.peek()
-    if ttype == "OP" and value == "-":
-        state.advance()
+def parse_unary(state):
+    t_type, t_val = current(state)
+    if t_type == "OP" and t_val == "-":
+        next_token(state)
         operand = parse_unary(state)
         return ("neg", operand)
-    if ttype == "OP" and value == "+":
-        raise ValueError("Unary '+' is not supported")
+    if t_type == "OP" and t_val == "+":
+        raise ValueError("unary plus not allowed")
     return parse_power(state)
 
-
-def parse_power(state: ParseState):
+def parse_power(state):
     node = parse_primary(state)
-    ttype, value = state.peek()
-    if ttype == "OP" and value == "^":
-        state.advance()
-        right = parse_unary(state)  # right-associative, allows e.g. 2^-3
+    t_type, t_val = current(state)
+    if t_type == "OP" and t_val == "^":
+        next_token(state)
+        right = parse_unary(state)
         node = ("^", node, right)
     return node
 
-
-def parse_primary(state: ParseState):
-    ttype, value = state.peek()
-    if ttype == "NUM":
-        state.advance()
-        return ("num", float(value))
-    if ttype == "LPAREN":
-        state.advance()
+def parse_primary(state):
+    t_type, t_val = current(state)
+    if t_type == "NUM":
+        next_token(state)
+        return ("num", float(t_val))
+    if t_type == "LPAREN":
+        next_token(state)
         node = parse_expr(state)
-        ttype2, _ = state.peek()
-        if ttype2 != "RPAREN":
-            raise ValueError("Expected ')'")
-        state.advance()
+        if current(state)[0] != "RPAREN":
+            raise ValueError("missing closing bracket")
+        next_token(state)
         return node
-    raise ValueError(f"Unexpected token {ttype}")
-
+    raise ValueError("unexpected token")
 
 def parse(tokens):
-    state = ParseState(tokens)
+    state = [tokens, 0]
     node = parse_expr(state)
-    if state.peek()[0] != "END":
-        raise ValueError("Unexpected trailing tokens")
+    if current(state)[0] != "END":
+        raise ValueError("leftover tokens")
     return node
 
-
-# ---------------------------------------------------------------------------
-# Evaluator
-# ---------------------------------------------------------------------------
-
-def evaluate_node(node):
+def evaluate(node):
     tag = node[0]
     if tag == "num":
         return node[1]
     if tag == "neg":
-        return -evaluate_node(node[1])
-    left = evaluate_node(node[1])
-    right = evaluate_node(node[2])
+        return -evaluate(node[1])
+
+    left = evaluate(node[1])
+    right = evaluate(node[2])
     if tag == "+":
         return left + right
     if tag == "-":
@@ -204,108 +147,81 @@ def evaluate_node(node):
         return left % right
     if tag == "^":
         return left ** right
-    raise ValueError(f"Unknown node tag '{tag}'")
 
-
-# ---------------------------------------------------------------------------
-# Formatting helpers
-# ---------------------------------------------------------------------------
-
-def format_result(value: float) -> str:
-    if value == int(value):
-        return str(int(value))
-    rounded = round(value, 4)
-    # keep up to 4 decimal places, no trailing zeros beyond what's needed
-    text = f"{rounded:.4f}".rstrip("0").rstrip(".")
-    return text
-
-
-def format_tree(node) -> str:
+def tree_to_string(node):
     tag = node[0]
     if tag == "num":
         return format_result(node[1])
     if tag == "neg":
-        return f"(neg {format_tree(node[1])})"
-    return f"({tag} {format_tree(node[1])} {format_tree(node[2])})"
+        return "(neg " + tree_to_string(node[1]) + ")"
+    return "(" + tag + " " + tree_to_string(node[1]) + " " + tree_to_string(node[2]) + ")"
 
+def format_result(value):
+    if value == int(value):
+        return str(int(value))
+    rounded = round(value, 4)
+    text = ("%.4f" % rounded).rstrip("0").rstrip(".")
+    return text
 
-# ---------------------------------------------------------------------------
-# Public interface
-# ---------------------------------------------------------------------------
-
-def evaluate_file(input_path: str) -> list:
-    import os
-
+def evaluate_file(input_path):
     results = []
-    with open(input_path, "r", encoding="utf-8") as f:
-        lines = [line.rstrip("\n") for line in f]
 
-    output_dir = os.path.dirname(os.path.abspath(input_path))
-    output_path = os.path.join(output_dir, "output.txt")
+    f = open(input_path, "r", encoding="utf-8")
+    lines = [line.rstrip("\n") for line in f]
+    f.close()
+
+    out_dir = os.path.dirname(os.path.abspath(input_path))
+    out_path = os.path.join(out_dir, "output.txt")
 
     blocks = []
     for line in lines:
         if line.strip() == "":
             continue
+
         entry = {"input": line}
 
-        # Tokenizing and parsing/evaluating are treated as separate stages:
-        # a bad character (e.g. '@') fails tokenizing, so *everything* is
-        # ERROR. A structurally invalid expression built from otherwise
-        # valid tokens (e.g. "(3 + 4" with no closing paren) still shows the
-        # real token list - only Tree and Result become ERROR.
         try:
             tokens = tokenize(line)
-            tokens_str = format_tokens(tokens)
+            tokens_str = tokens_to_string(tokens)
         except ValueError:
             entry["tree"] = "ERROR"
             entry["tokens"] = "ERROR"
             entry["result"] = "ERROR"
-            tokens_str = "ERROR"
-            tree_str = "ERROR"
-            result_str = "ERROR"
             results.append(entry)
-            blocks.append(f"Input: {entry['input']}\n"
-                           f"Tree: {tree_str}\n"
-                           f"Tokens: {tokens_str}\n"
-                           f"Result: {result_str}")
+            blocks.append("Input: " + line + "\nTree: ERROR\nTokens: ERROR\nResult: ERROR")
             continue
 
         try:
             tree = parse(tokens)
-            tree_str = format_tree(tree)
-            value = evaluate_node(tree)
+            tree_str = tree_to_string(tree)
+            value = evaluate(tree)
+            result_str = format_result(value)
             entry["tree"] = tree_str
             entry["tokens"] = tokens_str
             entry["result"] = value
-            result_str = format_result(value)
         except (ValueError, ZeroDivisionError):
+            tree_str = "ERROR"
+            result_str = "ERROR"
             entry["tree"] = "ERROR"
             entry["tokens"] = tokens_str
             entry["result"] = "ERROR"
-            tree_str = "ERROR"
-            result_str = "ERROR"
 
         results.append(entry)
-        blocks.append(f"Input: {entry['input']}\n"
-                       f"Tree: {tree_str}\n"
-                       f"Tokens: {tokens_str}\n"
-                       f"Result: {result_str}")
+        blocks.append("Input: " + line + "\nTree: " + tree_str + "\nTokens: " + tokens_str + "\nResult: " + result_str)
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write("\n\n".join(blocks))
-        if blocks:
-            f.write("\n")
+    out = open(out_path, "w", encoding="utf-8")
+    out.write("\n\n".join(blocks))
+    if blocks:
+        out.write("\n")
+    out.close()
 
     return results
 
-
 def main():
-    input_path = sys.argv[1] if len(sys.argv) > 1 else "input.txt"
-    results = evaluate_file(input_path)
+    path = sys.argv[1] if len(sys.argv) > 1 else "input.txt"
+    results = evaluate_file(path)
     for r in results:
         print(r)
-
 
 if __name__ == "__main__":
     main()
