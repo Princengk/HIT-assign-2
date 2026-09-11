@@ -194,16 +194,23 @@ def evaluate_file(input_path):
         try:
             tree = parse(tokens)
             tree_str = tree_to_string(tree)
-            value = evaluate(tree)
-            result_str = format_result(value)
-            entry["tree"] = tree_str
-            entry["tokens"] = tokens_str
-            entry["result"] = value
-        except (ValueError, ZeroDivisionError):
-            tree_str = "ERROR"
-            result_str = "ERROR"
+        except ValueError:
             entry["tree"] = "ERROR"
             entry["tokens"] = tokens_str
+            entry["result"] = "ERROR"
+            results.append(entry)
+            blocks.append("Input: " + line + "\nTree: ERROR\nTokens: " + tokens_str + "\nResult: ERROR")
+            continue
+
+        entry["tree"] = tree_str
+        entry["tokens"] = tokens_str
+
+        try:
+            value = evaluate(tree)
+            result_str = format_result(value)
+            entry["result"] = value
+        except (ValueError, ZeroDivisionError):
+            result_str = "ERROR"
             entry["result"] = "ERROR"
 
         results.append(entry)
