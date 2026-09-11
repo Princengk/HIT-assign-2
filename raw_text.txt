@@ -1,0 +1,3 @@
+Hello World! This is HIT137 Assignment 2.
+Testing digits 0123456789 and punctuation: ,.!?
+Mixed Case Letters: abcXYZnoM
