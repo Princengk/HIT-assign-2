@@ -1,3 +1,4 @@
+# Fix tokenizer to reject leading-dot numbers
 import os
 import sys
 
@@ -12,7 +13,7 @@ def tokenize(line):
             i += 1
             continue
 
-        if ch.isdigit() or ch == ".":
+        if ch.isdigit():
             j = i
             dot_used = False
             while j < n and (line[j].isdigit() or (line[j] == "." and not dot_used)):
@@ -20,7 +21,7 @@ def tokenize(line):
                     dot_used = True
                 j += 1
             num_text = line[i:j]
-            if num_text == "." or num_text.endswith("."):
+            if num_text.endswith("."):
                 raise ValueError("bad number")
             tokens.append(("NUM", num_text))
             i = j
